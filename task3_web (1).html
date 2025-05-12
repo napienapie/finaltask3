@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Motor Interface</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-900 flex items-center justify-center min-h-screen p-4 font-mono">
+  <div class="grid gap-6 p-6 bg-zinc-800 rounded-xl shadow-2xl w-full max-w-md text-zinc-100">
+    <h1 class="text-2xl font-extrabold text-center text-amber-400 mb-6">Motor Interface</h1>
+
+    <!-- Connection Panel -->
+    <div>
+      <button id="linkMotor" class="w-full bg-amber-500 text-zinc-900 py-2 rounded-md hover:bg-amber-600 transition-all duration-300">
+        Link to Motor
+      </button>
+      <p id="linkStatus" class="mt-2 text-center text-xs text-zinc-400"></p>
+    </div>
+
+    <!-- Speed Control Panel -->
+    <div>
+      <label for="speedTarget" class="block text-sm text-zinc-300 mb-1">Set Speed (RPM)</label>
+      <input type="number" id="speedTarget" class="w-full p-2 bg-zinc-700 border border-zinc-600 rounded-md text-zinc-100 focus:ring-2 focus:ring-amber-500 outline-none" placeholder="RPM" step="1" min="0" max="100">
+      <button id="sendSpeed" class="mt-2 w-full bg-emerald-500 text-zinc-900 py-2 rounded-md hover:bg-emerald-600 transition-all duration-300">
+        Send Speed
+      </button>
+    </div>
+
+    <!-- Speed Display Panel -->
+    <div class="p-3 bg-zinc-700 rounded-md">
+      <span class="text-sm text-zinc-300">Current Speed</span>
+      <p id="speedNow" class="text-lg font-bold text-amber-400">0.0 RPM</p>
+    </div>
+
+    <!-- PID Tuning Panel -->
+    <div>
+      <label for="gainP" class="block text-sm text-zinc-300 mb-1">P Gain</label>
+      <input type="number" id="gainP" class="w-full p-2 bg-zinc-700 border border-zinc-600 rounded-md text-zinc-100 focus:ring-2 focus:ring-amber-500 outline-none" placeholder="P Gain" step="0.1" min="0" value="20.0">
+      
+      <label for="gainI" class="block text-sm text-zinc-300 mt-3 mb-1">I Gain</label>
+      <input type="number" id="gainI" class="w-full p-2 bg-zinc-700 border border-zinc-600 rounded-md text-zinc-100 focus:ring-2 focus:ring-amber-500 outline-none" placeholder="I Gain" step="0.1" min="0" value="70.0">
+      
+      <label for="gainD" class="block text-sm text-zinc-300 mt-3 mb-1">D Gain</label>
+      <input type="number" id="gainD" class="w-full p-2 bg-zinc-700 border border-zinc-600 rounded-md text-zinc-100 focus:ring-2 focus:ring-amber-500 outline-none" placeholder="D Gain" step="0.1" min="0" value="5.0">
+      
+      <button id="setGains" class="mt-3 w-full bg-violet-500 text-zinc-900 py-2 rounded-md hover:bg-violet-600 transition-all duration-300">
+        Apply Gains
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const bleConfig = {
+      service: '4fafc201-1fb5-459e-8fcc-c5c9c331914b',
+      chars: {
+        speedSet: 'beb5483e-36e1-4688-b7f5-ea07361b26a8',
+        speedRead: 'ca73b3ba-39f6-4ab3-91ae-186dc9577d99',
+        gainP: 'd5e4b2a1-3f8c-4e5b-9a2d-7b3e8c1f0a2b',
+        gainI: 'e6f5c3b2-4f9d-5f6c-ab3e-8c4f9d2e1b3c',
+        gainD: 'f7e6d4c3-5fae-4e7d-9c4f-9d5e0e3f2c4d'
+      }
+    };
+
+    let device = null;
+    let chars = {};
+
+    const showStatus = (msg, error = false) => {
+      const status = document.getElementById('linkStatus');
+      status.textContent = msg;
+      status.className = `mt-2 text-center text-xs ${error ? 'text-red-400' : 'text-zinc-400'}`;
+    };
+
+    const connectMotor = async () => {
+      try {
+        showStatus('Connecting...');
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{ name: 'Motor_Control' }],
+          optionalServices: [bleConfig.service]
+        });
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(bleConfig.service);
+
+        chars.speedSet = await service.getCharacteristic(bleConfig.chars.speedSet);
+        chars.speedRead = await service.getCharacteristic(bleConfig.chars.speedRead);
+        chars.gainP = await service.getCharacteristic(bleConfig.chars.gainP);
+        chars.gainI = await service.getCharacteristic(bleConfig.chars.gainI);
+        chars.gainD = await service.getCharacteristic(bleConfig.chars.gainD);
+
+        await chars.speedRead.startNotifications();
+        chars.speedRead.addEventListener('characteristicvaluechanged', (e) => {
+          const speed = new TextDecoder().decode(e.target.value);
+          document.getElementById('speedNow').textContent = `${parseFloat(speed).toFixed(1)} RPM`;
+        });
+
+        const btn = document.getElementById('linkMotor');
+        btn.textContent = 'Linked';
+        btn.disabled = true;
+        btn.classList.replace('bg-amber-500', 'bg-amber-300');
+        showStatus('Motor linked');
+      } catch (err) {
+        showStatus(`Link failed: ${err.message}`, true);
+      }
+    };
+
+    const updateSpeed = async () => {
+      const speed = document.getElementById('speedTarget').value;
+      if (!speed || parseFloat(speed) < 0 || !chars.speedSet) {
+        showStatus('Invalid speed or not linked', true);
+        return;
+      }
+      try {
+        await chars.speedSet.writeValue(new TextEncoder().encode(speed));
+        showStatus(`Speed set to ${speed} RPM`);
+      } catch (err) {
+        showStatus(`Speed update failed: ${err.message}`, true);
+      }
+    };
+
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    const updateGains = async () => {
+      const p = document.getElementById('gainP').value;
+      const i = document.getElementById('gainI').value;
+      const d = document.getElementById('gainD').value;
+      if (!p || !i || !d || parseFloat(p) < 0 || parseFloat(i) < 0 || parseFloat(d) < 0 || !chars.gainP) {
+        showStatus('Invalid gains or not linked', true);
+        return;
+      }
+      try {
+        showStatus('Setting gains...');
+        const enc = new TextEncoder();
+        await chars.gainP.writeValue(enc.encode(p));
+        await sleep(100);
+        await chars.gainI.writeValue(enc.encode(i));
+        await sleep(100);
+        await chars.gainD.writeValue(enc.encode(d));
+        showStatus(`Gains set: P=${p}, I=${i}, D=${d}`);
+      } catch (err) {
+        showStatus(`Gain update failed: ${err.message}`, true);
+      }
+    };
+
+    const init = () => {
+      document.getElementById('linkMotor').addEventListener('click', connectMotor);
+      document.getElementById('sendSpeed').addEventListener('click', updateSpeed);
+      document.getElementById('setGains').addEventListener('click', updateGains);
+    };
+
+    init();
+  </script>
+</body>
+</html>
